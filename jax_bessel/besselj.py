@@ -1,6 +1,6 @@
 import jax
 import jax.numpy as jnp
-import numpy as jnp
+import numpy as np
 from jax import jit, lax, vmap
 from jax.lax import scan
 from scipy import special
@@ -8,14 +8,13 @@ from jax._src import core, custom_derivatives, dtypes
 from jax._src.interpreters import ad
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact, promote_dtypes_inexact
-from jax._src.ops import special as ops_special
-from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
 from jax._src.typing import Array, ArrayLike
+import functools
 
-jax.config.update("jax_enable_x64", True)
+# jax.config.update("jax_enable_x64", True)
 
 # polynomial coefficients for J0
-PP0 = jnp.array(
+PP0 = np.array(
     [
         7.96936729297347051624e-4,
         8.28352392107440799803e-2,
@@ -26,7 +25,7 @@ PP0 = jnp.array(
         9.99999999999999997821e-1,
     ]
 )
-PQ0 = jnp.array(
+PQ0 = np.array(
     [
         9.24408810558863637013e-4,
         8.56288474354474431428e-2,
@@ -38,7 +37,7 @@ PQ0 = jnp.array(
     ]
 )
 
-QP0 = jnp.array(
+QP0 = np.array(
     [
         -1.13663838898469149931e-2,
         -1.28252718670509318512e0,
@@ -50,7 +49,7 @@ QP0 = jnp.array(
         -6.05014350600728481186e0,
     ]
 )
-QQ0 = jnp.array(
+QQ0 = np.array(
     [
         1.0,
         6.43178256118178023184e1,
@@ -63,7 +62,7 @@ QQ0 = jnp.array(
     ]
 )
 
-YP0 = jnp.array(
+YP0 = np.array(
     [
         1.55924367855235737965e4,
         -1.46639295903971606143e7,
@@ -75,7 +74,7 @@ YP0 = jnp.array(
         -1.84950800436986690637e16,
     ]
 )
-YQ0 = jnp.array(
+YQ0 = np.array(
     [
         1.04128353664259848412e3,
         6.26107330137134956842e5,
@@ -90,7 +89,7 @@ YQ0 = jnp.array(
 DR10 = 5.78318596294678452118e0
 DR20 = 3.04712623436620863991e1
 
-RP0 = jnp.array(
+RP0 = np.array(
     [
         -4.79443220978201773821e9,
         1.95617491946556577543e12,
@@ -98,7 +97,7 @@ RP0 = jnp.array(
         9.70862251047306323952e15,
     ]
 )
-RQ0 = jnp.array(
+RQ0 = np.array(
     [
         1.0,
         4.99563147152651017219e2,
@@ -113,7 +112,7 @@ RQ0 = jnp.array(
 )
 
 # J1
-RP1 = jnp.array(
+RP1 = np.array(
     [
         -8.99971225705559398224e8,
         4.52228297998194034323e11,
@@ -121,7 +120,7 @@ RP1 = jnp.array(
         3.68295732863852883286e15,
     ]
 )
-RQ1 = jnp.array(
+RQ1 = np.array(
     [
         1.0,
         6.20836478118054335476e2,
@@ -135,7 +134,7 @@ RQ1 = jnp.array(
     ]
 )
 
-PP1 = jnp.array(
+PP1 = np.array(
     [
         7.62125616208173112003e-4,
         7.31397056940917570436e-2,
@@ -146,7 +145,7 @@ PP1 = jnp.array(
         1.00000000000000000254e0,
     ]
 )
-PQ1 = jnp.array(
+PQ1 = np.array(
     [
         5.71323128072548699714e-4,
         6.88455908754495404082e-2,
@@ -158,7 +157,7 @@ PQ1 = jnp.array(
     ]
 )
 
-QP1 = jnp.array(
+QP1 = np.array(
     [
         5.10862594750176621635e-2,
         4.98213872951233449420e0,
@@ -170,7 +169,7 @@ QP1 = jnp.array(
         2.52070205858023719784e1,
     ]
 )
-QQ1 = jnp.array(
+QQ1 = np.array(
     [
         1.0,
         7.42373277035675149943e1,
@@ -183,7 +182,7 @@ QQ1 = jnp.array(
     ]
 )
 
-YP1 = jnp.array(
+YP1 = np.array(
     [
         1.26320474790178026440e9,
         -6.47355876379160291031e11,
@@ -193,7 +192,7 @@ YP1 = jnp.array(
         -7.78877196265950026825e17,
     ]
 )
-YQ1 = jnp.array(
+YQ1 = np.array(
     [
         5.94301592346128195359e2,
         2.35564092943068577943e5,
@@ -236,6 +235,7 @@ def j1_large(x: ArrayLike) -> Array:
     return p * SQ2OPI / jnp.sqrt(x)
 
 
+@jax.jit
 def j1(z: ArrayLike) -> Array:
     """
     Bessel function of the first kind of order one and a real argument
@@ -314,27 +314,15 @@ def j0(z: ArrayLike) -> Array:
     return jnp.where(jnp.abs(z) < 5.0, j0_small(jnp.abs(z)), j0_large(jnp.abs(z)))
 
 
-# POWER SERIES IMPLEMENTATION
-def besselj_power_series(v, x, maxiter=300):
-    """ """
-    out = 0.0
-    a = (x / 2) ** v / jax.scipy.special.gamma(v + 1)
-    t2 = (x / 2) ** 2
-    for i in range(maxiter + 1):
-        out += a
-        a *= -1 / ((v + i + 1) * (i + 1)) * t2
-    return out
-
-
 # POLYNOMIAL IMPLEMENTATION
 def besseljy_debye(v, x):
     vmx = (v + x) * (v - x)
-    vs = jnp.sqrt(vmx)
-    sqvs = 1.0 / jnp.sqrt(vs)
+    vs = np.sqrt(vmx)
+    sqvs = 1.0 / np.sqrt(vs)
     n = v * (-np.log(x / (v + vs))) - vs
 
-    coef_Jn = jnp.sqrt(1.0 / (2 * jnp.pi)) * jnp.exp(-n) * sqvs
-    coef_Yn = -jnp.sqrt(2.0 / jnp.pi) * jnp.exp(n) * sqvs
+    coef_Jn = np.sqrt(1.0 / (2 * np.pi)) * np.exp(-n) * sqvs
+    coef_Yn = -np.sqrt(2.0 / np.pi) * np.exp(n) * sqvs
 
     p = v / vs
     p2 = v**2 / vmx
@@ -344,12 +332,9 @@ def besseljy_debye(v, x):
 
 
 def Uk_poly_Jn(p, v, p2, x):
-    # if v > 5.0 + 1.00033 * x + 11.26 * jnp.power(x, 1.0 / 3.0):
-    #    return Uk_poly10(p, v, p2)  # Assuming Uk_poly10 is defined elsewhere
-    # else:
-    #    return Uk_poly20(p, v, p2)  # Assuming Uk_poly20 is defined elsewhere
-    return jnp.where(
-        v > (5.0 + 1.00033 * x + 11.26 * jnp.cbrt(x)),
+
+    return np.where(
+        v > (5.0 + 1.00033 * x + 11.26 * np.cbrt(x)),
         Uk_poly10(p, v, p2),
         Uk_poly20(p, v, p2),
     )
@@ -361,7 +346,7 @@ def Uk_poly10(p, v, p2):
 
 
 def Uk_poly10_eval(p2):
-    u10 = jnp.polyval(
+    u10 = np.polyval(
         (
             110.01714026924674,
             -13886.08975371704,
@@ -377,7 +362,7 @@ def Uk_poly10_eval(p2):
         ),
         p2,
     )
-    u9 = jnp.polyval(
+    u9 = np.polyval(
         (
             24.380529699556064,
             -2499.8304818112097,
@@ -392,7 +377,7 @@ def Uk_poly10_eval(p2):
         ),
         p2,
     )
-    u8 = jnp.polyval(
+    u8 = np.polyval(
         (
             6.074042001273483,
             -493.91530477308805,
@@ -406,7 +391,7 @@ def Uk_poly10_eval(p2):
         ),
         p2,
     )
-    u7 = jnp.polyval(
+    u7 = np.polyval(
         (
             1.7277275025844574,
             -108.09091978839466,
@@ -419,7 +404,7 @@ def Uk_poly10_eval(p2):
         ),
         p2,
     )
-    u6 = jnp.polyval(
+    u6 = np.polyval(
         (
             0.5725014209747314,
             -26.491430486951554,
@@ -431,7 +416,7 @@ def Uk_poly10_eval(p2):
         ),
         p2,
     )
-    u5 = jnp.polyval(
+    u5 = np.polyval(
         (
             0.22710800170898438,
             -7.368794359479632,
@@ -442,7 +427,7 @@ def Uk_poly10_eval(p2):
         ),
         p2,
     )
-    u4 = jnp.polyval(
+    u4 = np.polyval(
         (
             0.112152099609375,
             -2.3640869140625,
@@ -452,15 +437,15 @@ def Uk_poly10_eval(p2):
         ),
         p2,
     )
-    u3 = jnp.polyval(
+    u3 = np.polyval(
         (0.0732421875, -0.8912109375, 1.8464626736111112, -1.0258125964506173),
         p2,
     )
-    u2 = jnp.polyval(
+    u2 = np.polyval(
         (0.0703125, -0.4010416666666667, 0.3342013888888889),
         p2,
     )
-    u1 = jnp.polyval(
+    u1 = np.polyval(
         (0.125, -0.20833333333333334),
         p2,
     )
@@ -473,7 +458,7 @@ def Uk_poly20(p, v, p2):
 
 
 def _Uk_poly20(p2):
-    u20 = jnp.polyval(
+    u20 = np.polyval(
         (
             3.646840080706556e10,
             -1.818726203851104e13,
@@ -499,7 +484,7 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u19 = jnp.polyval(
+    u19 = np.polyval(
         (
             3.8362551802304335e9,
             -1.7277040123529995e12,
@@ -524,7 +509,7 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u18 = jnp.polyval(
+    u18 = np.polyval(
         (
             4.259392165047669e8,
             -1.722832387173505e11,
@@ -548,7 +533,7 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u17 = jnp.polyval(
+    u17 = np.polyval(
         (
             5.0069589531988926e7,
             -1.8078220384658062e10,
@@ -571,7 +556,7 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u16 = jnp.polyval(
+    u16 = np.polyval(
         (
             6.252951493434797e6,
             -2.0016469281917763e9,
@@ -593,7 +578,7 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u15 = jnp.polyval(
+    u15 = np.polyval(
         (
             832859.3040162893,
             -2.3455796352225152e8,
@@ -614,7 +599,7 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u14 = jnp.polyval(
+    u14 = np.polyval(
         (
             118838.42625678326,
             -2.9188388122220814e7,
@@ -634,7 +619,7 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u13 = jnp.polyval(
+    u13 = np.polyval(
         (
             18257.755474293175,
             -3.8718334425726123e6,
@@ -653,7 +638,7 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u12 = jnp.polyval(
+    u12 = np.polyval(
         (
             3038.090510922384,
             -549842.3275722887,
@@ -671,7 +656,7 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u11 = jnp.polyval(
+    u11 = np.polyval(
         (
             551.3358961220206,
             -84005.4336030241,
@@ -688,7 +673,7 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u10 = jnp.polyval(
+    u10 = np.polyval(
         (
             110.01714026924674,
             -13886.08975371704,
@@ -704,7 +689,7 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u9 = jnp.polyval(
+    u9 = np.polyval(
         (
             24.380529699556064,
             -2499.8304818112097,
@@ -719,7 +704,7 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u8 = jnp.polyval(
+    u8 = np.polyval(
         (
             6.074042001273483,
             -493.91530477308805,
@@ -733,7 +718,7 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u7 = jnp.polyval(
+    u7 = np.polyval(
         (
             1.7277275025844574,
             -108.09091978839466,
@@ -746,7 +731,7 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u6 = jnp.polyval(
+    u6 = np.polyval(
         (
             0.5725014209747314,
             -26.491430486951554,
@@ -758,7 +743,7 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u5 = jnp.polyval(
+    u5 = np.polyval(
         (
             0.22710800170898438,
             -7.368794359479632,
@@ -769,7 +754,7 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u4 = jnp.polyval(
+    u4 = np.polyval(
         (
             0.112152099609375,
             -2.3640869140625,
@@ -779,15 +764,15 @@ def _Uk_poly20(p2):
         ),
         p2,
     )
-    u3 = jnp.polyval(
+    u3 = np.polyval(
         (0.0732421875, -0.8912109375, 1.8464626736111112, -1.0258125964506173),
         p2,
     )
-    u2 = jnp.polyval(
+    u2 = np.polyval(
         (0.0703125, -0.4010416666666667, 0.3342013888888889),
         p2,
     )
-    u1 = jnp.polyval(
+    u1 = np.polyval(
         (0.125, -0.20833333333333334),
         p2,
     )
@@ -824,7 +809,7 @@ def split_evalpoly(x, P):
     out = P[-1]
     out2 = P[-2]
 
-    for i in range(N - 1, 0, -2):
+    for i in range(N - 3, 0, -2):
         out = xx * out + P[i]
         out2 = xx * out2 + P[i - 1]
 
@@ -835,3 +820,58 @@ def split_evalpoly(x, P):
         out = xx * out + P[0]
         out2 *= x
         return (out - out2, out2 + out)
+
+
+def besselj_power_series(x, v, n_iter=100):
+    """ """
+    out = jnp.zeros_like(x)
+    a = jnp.power(x / 2, v) / jax.scipy.special.gamma(v + 1.0)
+    t2 = jnp.square(x / 2)
+
+    def body_func(i, carry):
+        """ """
+        out, a = carry
+        out += a
+        a *= -t2 / ((v + i + 1) * (i + 1))
+        return (out, a)
+
+    # Loop
+    return jax.lax.fori_loop(0, n_iter, body_func, (out, a))[0]
+
+
+@functools.partial(jax.jit, static_argnames=["v"])
+def bessel_jn(z: ArrayLike, v: int) -> Array:
+    """Bessel function of the first kind of integer order > 2 and real argument.
+    Calculates higher order Bessel functions using the recurrence relation.
+    This is numerically accurate to machine precision wrt the scipy implementation for
+    z >~2, while higher order Bessel functions can be ~ 1e-10 wrt scipy for small z.
+    Reference:
+    Cephes Mathematical Library.
+    Args:
+      z: The sampling point(s) at which the Bessel function of the first kind are
+        computed.
+      v: The order (int) of the Bessel function.
+    Returns:
+      An array of shape `(v+1, *z.shape)` containing the values of the Bessel
+      function of orders 0, 1, ..., v. The return type matches the type of `z`.
+    Raises:
+      TypeError if `v` is not integer.
+      ValueError if elements of array `z` are not float.
+    """
+    z = jnp.asarray(z)
+    (z,) = promote_dtypes_inexact(z)
+    z_dtype = lax.dtype(z)
+    if dtypes.issubdtype(z_dtype, complex):
+        raise ValueError("complex input not supported.")
+
+    # use recurrence relation J_v+1(z) = 2 v/z J_v(z) - J_v-1(z) recursively
+    def body(i, carry):
+        jnm1, jn = carry
+        jnplus = (2 * i) / z * jn - jnm1
+        return (jn, jnplus)
+
+    jn = jnp.select(
+        [v == 0, v == 1, v > 1],
+        [j0(z), j1(z), jax.lax.fori_loop(1, v, body, (j0(z), j1(z)))[-1]],
+    )
+    return jnp.where(z < 1e-5, 0.0, jn)
